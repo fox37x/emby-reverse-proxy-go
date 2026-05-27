@@ -220,7 +220,8 @@ HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 ./emby-proxy
 ## 环境变量
 
 - `LISTEN_ADDR`：监听地址，默认 `:8080`
-- `BLOCK_PRIVATE_TARGETS`：默认 `true`
+- `BLOCK_PRIVATE_TARGETS`：是否阻止内网、localhost、链路本地等目标，默认 `true`
+- `DNS_CACHE_TTL`：安全 DNS 解析缓存时间，默认 `60s`；可写 `30s`、`2m` 或纯数字秒数；设为 `0` 可关闭缓存
 
 ## 健康检查
 

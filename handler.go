@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ var gzipWriterPool = sync.Pool{
 type ProxyHandler struct {
 	client         *http.Client
 	resolver       *net.Resolver
+	resolverCache  *targetResolverCache
 	allowUnsafeDNS bool
 	dialContextFn  func(context.Context, string, string) (net.Conn, error)
 }
@@ -61,7 +63,11 @@ func parseBlockPrivateTargets(raw string) bool {
 }
 
 func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
-	h := &ProxyHandler{resolver: net.DefaultResolver, allowUnsafeDNS: !blockPrivateTargets}
+	resolver := net.DefaultResolver
+	h := &ProxyHandler{resolver: resolver, allowUnsafeDNS: !blockPrivateTargets}
+	if blockPrivateTargets {
+		h.resolverCache = newTargetResolverCache(resolver, parseDNSCacheTTL(os.Getenv("DNS_CACHE_TTL")))
+	}
 	h.dialContextFn = h.dialContext
 	transport := &http.Transport{
 		MaxIdleConns:          200,
@@ -103,7 +109,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var rt *resolvedTarget
 	if !h.allowUnsafeDNS {
-		rt, err = resolveSafeTarget(r.Context(), h.resolver, t)
+		rt, err = h.resolveTarget(r.Context(), t)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -118,6 +124,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveHTTPProxy(w, r, t, start)
+}
+
+func (h *ProxyHandler) resolveTarget(ctx context.Context, t *target) (*resolvedTarget, error) {
+	if h.resolverCache != nil {
+		return h.resolverCache.resolve(ctx, t)
+	}
+	return resolveSafeTarget(ctx, h.resolver, t)
 }
 
 func resolvedTargetFromContext(ctx context.Context) (*resolvedTarget, error) {
