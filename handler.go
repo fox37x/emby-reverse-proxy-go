@@ -89,7 +89,7 @@ func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
 		Proxy:                 transportProxyURL,
 		DialContext:           h.dialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 300 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		// Must be true for a proxy — prevents Go from silently
 		// decompressing upstream gzip in memory then sending uncompressed.
