@@ -221,10 +221,7 @@ HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 ./emby-proxy
 
 - `LISTEN_ADDR`：监听地址，默认 `:8080`
 - `BLOCK_PRIVATE_TARGETS`：默认 `true`
-- `UPSTREAM_MAX_CONNS_PER_HOST`：访问同一上游的最大并发连接数，默认 `0`（不限制，适合频繁拖拽媒体流）
-- `UPSTREAM_MAX_IDLE_CONNS_PER_HOST`：访问同一上游保留的最大空闲连接数，默认 `100`
-- `UPSTREAM_RESPONSE_HEADER_TIMEOUT`：等待上游响应头的超时，默认 `30s`；也可写纯数字秒数
-- `UPSTREAM_FORCE_HTTP2`：是否强制尝试上游 HTTP/2，默认 `false`；媒体流拖拽卡顿时建议保持关闭
+- `UPSTREAM_MAX_CONNS_PER_HOST`：访问同一上游的最大并发连接数，默认 `200`。原项目是 `50`，本 fork 只把这个安全余量调大，其他上游行为保持原样。
 
 ## Caddy 直接反代示例
 
@@ -239,24 +236,19 @@ Caddyfile 示例：
 
 ```caddyfile
 your.domain.com {
-    reverse_proxy 127.0.0.1:8080 {
-        flush_interval -1
-        transport http {
-            dial_timeout 30s
-            read_timeout 0
-            write_timeout 0
-        }
-    }
+    reverse_proxy 127.0.0.1:8080
 }
 ```
 
 如果 Caddy 和 `emby-proxy` 在同一个 Docker 网络内，把 `127.0.0.1:8080` 换成 `emby-proxy:8080`。
 
-本 fork 针对频繁拖拽媒体流的默认优化：
+本 fork 的默认优化很保守：
 
-- 不限制同一上游连接数，避免旧 Range 流占满连接池后新拖拽排队
-- 默认关闭访问上游的 HTTP/2，避免部分上游/CDN 对取消的 Range stream 清理过慢
-- 将上游响应头超时从原来的 300 秒降到 30 秒，避免异常请求卡住五分钟才释放
+- 只把同一上游最大并发连接数从 `50` 提高到 `200`
+- 保留原项目的上游 HTTP/2 行为
+- 保留原项目的 `300s` 上游响应头超时
+
+这样可以降低多次拖拽时旧 Range 流占满连接池的概率，同时不改变协议和超时策略。
 
 ## 健康检查
 

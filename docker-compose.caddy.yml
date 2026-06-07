@@ -13,8 +13,5 @@ services:
     environment:
       LISTEN_ADDR: ':8080'
       BLOCK_PRIVATE_TARGETS: 'true'
-      # Seek-stable defaults baked into this fork; keep these unless you know why changing them.
-      UPSTREAM_MAX_CONNS_PER_HOST: '0'
-      UPSTREAM_MAX_IDLE_CONNS_PER_HOST: '100'
-      UPSTREAM_RESPONSE_HEADER_TIMEOUT: '30s'
-      UPSTREAM_FORCE_HTTP2: 'false'
+      # Conservative seek fix: original project used 50; this fork defaults to 200.
+      UPSTREAM_MAX_CONNS_PER_HOST: '200'
