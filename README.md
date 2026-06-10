@@ -221,9 +221,12 @@ HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 ./emby-proxy
 
 - `LISTEN_ADDR`：监听地址，默认 `:8080`
 - `BLOCK_PRIVATE_TARGETS`：默认 `true`
-- `UPSTREAM_MAX_CONNS_PER_HOST`：访问同一上游的最大并发连接数，默认 `200`。原项目是 `50`，本 fork 把这个安全余量调大。
+- `UPSTREAM_MAX_CONNS_PER_HOST`：访问同一上游的最大并发连接数，默认 `0`。`0` 表示不限制，用于避免 Apple TV / 频繁拖拽时旧 Range 流占住连接额度导致新请求排队。
+- `UPSTREAM_MAX_IDLE_CONNS_PER_HOST`：访问同一上游保留的最大空闲连接数，默认 `100`。
+- `UPSTREAM_RESPONSE_HEADER_TIMEOUT`：等待上游响应头的超时时间，单位秒，默认 `30`。
+- `UPSTREAM_FORCE_HTTP2`：是否强制尝试上游 HTTP/2，默认 `false`。频繁 Range seek/cancel 场景下 HTTP/1.1 通常更稳；确认某个上游 HTTP/2 更好时再设为 `true`。
 
-本 fork 还把等待上游响应头的超时从原项目的 `300s` 调整为 `60s`：异常拖拽请求最多约 1 分钟释放，不再等五六分钟；正常上游一般不会 60 秒还不返回响应头。
+本 fork 针对 Apple TV / SenPlayer 这类更激进的媒体 Range 请求，把默认策略改为：不限制同一上游并发连接、提高空闲连接池、关闭上游 HTTP/2、缩短异常响应头等待时间。
 
 ## Caddy 直接反代示例
 
@@ -244,13 +247,14 @@ your.domain.com {
 
 如果 Caddy 和 `emby-proxy` 在同一个 Docker 网络内，把 `127.0.0.1:8080` 换成 `emby-proxy:8080`。
 
-本 fork 的默认优化很保守：
+本 fork 的默认优化更偏向 Apple TV / SenPlayer 这类频繁 Range seek/cancel 的播放场景：
 
-- 只把同一上游最大并发连接数从 `50` 提高到 `200`
-- 保留原项目的上游 HTTP/2 行为
-- 将原项目的 `300s` 上游响应头超时缩短到 `60s`
+- 同一上游最大并发连接数默认 `0`，也就是不限制，避免旧 Range 流占住连接额度导致新请求排队
+- 同一上游空闲连接数默认 `100`
+- 上游 HTTP/2 默认关闭，优先使用 HTTP/1.1 处理频繁 Range 请求
+- 等待上游响应头超时默认 `30s`，异常请求更快释放
 
-这样可以降低多次拖拽时旧 Range 流占满连接池的概率；如果仍遇到异常卡住，也会约 60 秒释放，不再等五六分钟。
+如果你是多人公开服务，担心无限并发连接被滥用，可以把 `UPSTREAM_MAX_CONNS_PER_HOST` 显式设为 `200` 或更合适的上限。
 
 ## 健康检查
 
