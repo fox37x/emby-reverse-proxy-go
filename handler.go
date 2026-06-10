@@ -44,40 +44,6 @@ type ProxyHandler struct {
 const upstreamDialTimeout = 30 * time.Second
 const upstreamKeepAlive = 60 * time.Second
 
-func upstreamMaxConnsPerHost() int {
-	// 0 means no per-host connection limit in Go's http.Transport.
-	// This is the safest default for Apple TV / Range seek bursts on small private deployments:
-	// old media Range streams won't make new Range requests wait behind a proxy-side cap.
-	return parseEnvInt("UPSTREAM_MAX_CONNS_PER_HOST", 0)
-}
-
-func upstreamMaxIdleConnsPerHost() int {
-	return parseEnvInt("UPSTREAM_MAX_IDLE_CONNS_PER_HOST", 100)
-}
-
-func upstreamResponseHeaderTimeout() time.Duration {
-	return time.Duration(parseEnvInt("UPSTREAM_RESPONSE_HEADER_TIMEOUT", 30)) * time.Second
-}
-
-func upstreamForceHTTP2() bool {
-	return parseEnvBool("UPSTREAM_FORCE_HTTP2", false)
-}
-
-func parseEnvBool(key string, def bool) bool {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return def
-	}
-	switch strings.ToLower(raw) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return def
-	}
-}
-
 func parseEnvInt(key string, def int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -111,22 +77,23 @@ func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
 	h := &ProxyHandler{resolver: net.DefaultResolver, allowUnsafeDNS: !blockPrivateTargets}
 	h.dialContextFn = h.dialContext
 	transport := &http.Transport{
-		MaxIdleConns:          500,
-		MaxIdleConnsPerHost:   upstreamMaxIdleConnsPerHost(),
-		MaxConnsPerHost:       upstreamMaxConnsPerHost(),
+		MaxIdleConns:        500,
+		MaxIdleConnsPerHost: 100,
+		// 0 means no per-host connection limit. This avoids Apple TV / Range seek bursts
+		// queuing new media requests behind stale upstream streams.
+		MaxConnsPerHost:       0,
 		IdleConnTimeout:       120 * time.Second,
 		TLSClientConfig:       &tls.Config{},
 		Proxy:                 transportProxyURL,
 		DialContext:           h.dialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: upstreamResponseHeaderTimeout(),
+		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		// Must be true for a proxy — prevents Go from silently
 		// decompressing upstream gzip in memory then sending uncompressed.
 		DisableCompression: true,
 		// HTTP/1.1 is the safer default for frequent media Range seek/cancel churn.
-		// Set UPSTREAM_FORCE_HTTP2=true only for upstreams known to behave better on H2.
-		ForceAttemptHTTP2: upstreamForceHTTP2(),
+		ForceAttemptHTTP2: false,
 		// Restore sensible buffer sizes. nginx proxy_buffering off only skips
 		// disk buffering; kernel socket buffers remain large.
 		// 32 KB keeps syscall count low without excess pre-read.
