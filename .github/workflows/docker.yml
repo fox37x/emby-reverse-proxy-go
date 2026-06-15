@@ -32,8 +32,6 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/emby-reverse-proxy-go:seek-fix
-            ghcr.io/${{ github.repository_owner }}/emby-reverse-proxy-go:latest
+          tags: ghcr.io/${{ github.repository_owner }}/emby-reverse-proxy-go:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
