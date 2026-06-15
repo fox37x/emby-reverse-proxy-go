@@ -16,12 +16,13 @@ import (
 	"time"
 )
 
-// copyBufPool reuses 32 KB buffers for io.CopyBuffer.
-// 32 KB balances syscall count vs memory: 1 MB = 32 syscalls, not 256.
+// copyBufPool reuses 64 KB buffers for io.CopyBuffer.
+// Increased from 32 KB to 64 KB for better throughput on high-bandwidth connections.
+// 64 KB balances syscall count vs memory: 1 MB = 16 syscalls.
 // nginx proxy_buffering off only disables disk buffering, not socket buffers.
 var copyBufPool = sync.Pool{
 	New: func() any {
-		buf := make([]byte, 32*1024)
+		buf := make([]byte, 64*1024)
 		return &buf
 	},
 }
@@ -37,6 +38,7 @@ var gzipWriterPool = sync.Pool{
 type ProxyHandler struct {
 	client         *http.Client
 	resolver       *net.Resolver
+	dnsCache       *dnsCache
 	allowUnsafeDNS bool
 	dialContextFn  func(context.Context, string, string) (net.Conn, error)
 }
@@ -74,11 +76,25 @@ func parseBlockPrivateTargets(raw string) bool {
 }
 
 func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
-	h := &ProxyHandler{resolver: net.DefaultResolver, allowUnsafeDNS: !blockPrivateTargets}
+	h := &ProxyHandler{
+		resolver:       net.DefaultResolver,
+		allowUnsafeDNS: !blockPrivateTargets,
+	}
+	// Initialize DNS cache with 5 minute TTL
+	if !h.allowUnsafeDNS {
+		h.dnsCache = newDNSCache(h.resolver, 5*time.Minute)
+	}
 	h.dialContextFn = h.dialContext
+
+	// Optimize connection pool settings for typical VPS/home server
+	// MaxIdleConns: global limit across all hosts
+	// MaxIdleConnsPerHost: per-upstream limit
+	maxIdleConns := parseEnvInt("MAX_IDLE_CONNS", 200)
+	maxIdleConnsPerHost := parseEnvInt("MAX_IDLE_CONNS_PER_HOST", 50)
+
 	transport := &http.Transport{
-		MaxIdleConns:        500,
-		MaxIdleConnsPerHost: 100,
+		MaxIdleConns:        maxIdleConns,
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
 		// 0 means no per-host connection limit. This avoids Apple TV / Range seek bursts
 		// queuing new media requests behind stale upstream streams.
 		MaxConnsPerHost:       0,
@@ -119,7 +135,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var rt *resolvedTarget
 	if !h.allowUnsafeDNS {
-		rt, err = resolveSafeTarget(r.Context(), h.resolver, t)
+		var err error
+		// Use cached DNS resolution
+		rt, err = h.dnsCache.resolveSafeTargetCached(r.Context(), t)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -246,12 +264,35 @@ func (h *ProxyHandler) serveHTTPProxy(w http.ResponseWriter, r *http.Request, t 
 }
 
 func (h *ProxyHandler) serveRewrittenBody(w http.ResponseWriter, r *http.Request, resp *http.Response, t *target, baseURL string) {
-	body, err := io.ReadAll(resp.Body)
+	// Limit rewrite to reasonable size to avoid excessive memory usage
+	const maxRewriteSize = 10 * 1024 * 1024 // 10 MB
+
+	// Check Content-Length if available
+	if resp.ContentLength > maxRewriteSize {
+		log.Printf("[WARN] %s %s/%s response too large for rewriting (%d bytes), streaming instead",
+			r.Method, t.Domain, t.Path, resp.ContentLength)
+		h.serveStreamBody(w, resp, t)
+		return
+	}
+
+	// Use LimitReader to prevent reading more than maxRewriteSize
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRewriteSize+1))
 	if err != nil {
 		log.Printf("[ERROR] %s %s/%s read rewritten body failed: %v", r.Method, t.Domain, t.Path, err)
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
+
+	// If we hit the limit, stream instead
+	if len(body) > maxRewriteSize {
+		log.Printf("[WARN] %s %s/%s response exceeds rewrite limit, streaming partial content",
+			r.Method, t.Domain, t.Path)
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		io.Copy(w, resp.Body)
+		return
+	}
+
 	rewritten := rewriteBody(body, baseURL)
 
 	// Compress rewritten text responses if client supports gzip.

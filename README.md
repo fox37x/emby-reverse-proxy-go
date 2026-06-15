@@ -219,10 +219,24 @@ HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 ./emby-proxy
 
 ## 环境变量
 
+### 基础配置
 - `LISTEN_ADDR`：监听地址，默认 `:8080`
 - `BLOCK_PRIVATE_TARGETS`：默认 `true`
 
-本 fork 针对 Apple TV / SenPlayer 这类更激进的媒体 Range 请求，已在代码里固定优化：不限制同一上游并发连接、同一上游空闲连接数固定 `100`、关闭上游 HTTP/2、等待上游响应头超时固定 `30s`。不需要额外写相关环境变量。
+### 性能调优（新增）
+- `MAX_IDLE_CONNS`：全局空闲连接池大小，默认 `200`
+- `MAX_IDLE_CONNS_PER_HOST`：每个上游的空闲连接数，默认 `50`
+
+本 fork 针对 Apple TV / SenPlayer 这类更激进的媒体 Range 请求进行了优化：
+
+- **DNS 缓存**：自动缓存 DNS 解析结果 5 分钟，大幅减少重复请求延迟
+- **不限制同一上游并发连接**：避免新请求排队
+- **优化连接池**：支持通过环境变量调整连接池大小
+- **关闭上游 HTTP/2**：优先使用 HTTP/1.1 处理频繁 Range 请求
+- **响应头超时 30s**：异常请求更快释放
+- **64KB 缓冲区**：提升高带宽场景的吞吐量
+
+详细性能优化说明见 [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md)。
 
 ## Caddy 直接反代示例
 
